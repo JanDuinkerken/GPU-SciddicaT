@@ -1,8 +1,8 @@
+#include "util.hpp"
 #include <omp.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
-#include "util.hpp"
 
 // ----------------------------------------------------------------------------
 // I/O parameters used to index argv[]
@@ -25,21 +25,21 @@
 // ----------------------------------------------------------------------------
 #define SET(M, columns, i, j, value) ((M)[(((i) * (columns)) + (j))] = (value))
 #define GET(M, columns, i, j) (M[(((i) * (columns)) + (j))])
-#define BUF_SET(M, rows, columns, n, i, j, value) ((M)[(((n) * (rows) * (columns)) + ((i) * (columns)) + (j))] = (value))
-#define BUF_GET(M, rows, columns, n, i, j) (M[(((n) * (rows) * (columns)) + ((i) * (columns)) + (j))])
+#define BUF_SET(M, rows, columns, n, i, j, value)                              \
+  ((M)[(((n) * (rows) * (columns)) + ((i) * (columns)) + (j))] = (value))
+#define BUF_GET(M, rows, columns, n, i, j)                                     \
+  (M[(((n) * (rows) * (columns)) + ((i) * (columns)) + (j))])
 
 // ----------------------------------------------------------------------------
 // Inline error checking
 // ----------------------------------------------------------------------------
-#define gpuErrchk(ans)                    \
-  {                                       \
-    gpuAssert((ans), __FILE__, __LINE__); \
-  }
-inline void gpuAssert(cudaError_t code, const char *file, int line, bool abort = true)
-{
-  if (code != cudaSuccess)
-  {
-    fprintf(stderr, "GPUassert: %s %s %d\n", cudaGetErrorString(code), file, line);
+#define gpuErrchk(ans)                                                         \
+  { gpuAssert((ans), __FILE__, __LINE__); }
+inline void gpuAssert(cudaError_t code, const char *file, int line,
+                      bool abort = true) {
+  if (code != cudaSuccess) {
+    fprintf(stderr, "GPUassert: %s %s %d\n", cudaGetErrorString(code), file,
+            line);
     if (abort)
       exit(code);
   }
@@ -48,12 +48,12 @@ inline void gpuAssert(cudaError_t code, const char *file, int line, bool abort =
 // ----------------------------------------------------------------------------
 // I/O functions
 // ----------------------------------------------------------------------------
-void readHeaderInfo(char *path, int &nrows, int &ncols, /*double &xllcorner, double &yllcorner, double &cellsize,*/ double &nodata)
-{
+void readHeaderInfo(char *path, int &nrows, int &ncols,
+                    /*double &xllcorner, double &yllcorner, double &cellsize,*/
+                    double &nodata) {
   FILE *f;
 
-  if ((f = fopen(path, "r")) == 0)
-  {
+  if ((f = fopen(path, "r")) == 0) {
     printf("%s configuration header file not found\n", path);
     exit(0);
   }
@@ -77,20 +77,17 @@ void readHeaderInfo(char *path, int &nrows, int &ncols, /*double &xllcorner, dou
   nodata = atof(str); // NODATA_value
 }
 
-bool loadGrid2D(double *M, int rows, int columns, char *path)
-{
+bool loadGrid2D(double *M, int rows, int columns, char *path) {
   FILE *f = fopen(path, "r");
 
-  if (!f)
-  {
+  if (!f) {
     printf("%s grid file not found\n", path);
     exit(0);
   }
 
   char str[STRLEN];
   for (int i = 0; i < rows; i++)
-    for (int j = 0; j < columns; j++)
-    {
+    for (int j = 0; j < columns; j++) {
       fscanf(f, "%s", str);
       SET(M, columns, i, j, atof(str));
     }
@@ -100,8 +97,7 @@ bool loadGrid2D(double *M, int rows, int columns, char *path)
   return true;
 }
 
-bool saveGrid2Dr(double *M, int rows, int columns, char *path)
-{
+bool saveGrid2Dr(double *M, int rows, int columns, char *path) {
   FILE *f;
   f = fopen(path, "w");
 
@@ -109,10 +105,8 @@ bool saveGrid2Dr(double *M, int rows, int columns, char *path)
     return false;
 
   char str[STRLEN];
-  for (int i = 0; i < rows; i++)
-  {
-    for (int j = 0; j < columns; j++)
-    {
+  for (int i = 0; i < rows; i++) {
+    for (int j = 0; j < columns; j++) {
       sprintf(str, "%f ", GET(M, columns, i, j));
       fprintf(f, "%s ", str);
     }
@@ -124,8 +118,7 @@ bool saveGrid2Dr(double *M, int rows, int columns, char *path)
   return true;
 }
 
-double *addLayer2D(int rows, int columns)
-{
+double *addLayer2D(int rows, int columns) {
   double *tmp;
   gpuErrchk(cudaMallocManaged(&tmp, sizeof(double) * rows * columns));
 
@@ -137,24 +130,20 @@ double *addLayer2D(int rows, int columns)
 // ----------------------------------------------------------------------------
 // init kernel, called once before the simulation loop
 // ----------------------------------------------------------------------------
-__global__ void sciddicaTSimulationInitKernel(int r, int c, double *Sz, double *Sh)
-{
+__global__ void sciddicaTSimulationInitKernel(int r, int c, double *Sz,
+                                              double *Sh) {
   int row_index = threadIdx.y + blockDim.y * blockIdx.y;
   int col_index = threadIdx.x + blockDim.x * blockIdx.x;
   int row_stride = blockDim.y * gridDim.y;
   int col_stride = blockDim.x * gridDim.x;
 
-  for (int row = row_index; row < r - 1; row += row_stride)
-  {
-    for (int col = col_index; col < c - 1; col += col_stride)
-    {
-      if (row > 0 && col > 0)
-      {
+  for (int row = row_index; row < r - 1; row += row_stride) {
+    for (int col = col_index; col < c - 1; col += col_stride) {
+      if (row > 0 && col > 0) {
         double z, h;
         h = GET(Sh, c, row, col);
 
-        if (h > 0.0)
-        {
+        if (h > 0.0) {
           z = GET(Sz, c, row, col);
           SET(Sz, c, row, col, z - h);
         }
@@ -166,16 +155,17 @@ __global__ void sciddicaTSimulationInitKernel(int r, int c, double *Sz, double *
 // ----------------------------------------------------------------------------
 // computing kernels, aka elementary processes in the XCA terminology
 // ----------------------------------------------------------------------------
-void sciddicaTResetFlows(int i, int j, int r, int c, double nodata, double *Sf)
-{
+void sciddicaTResetFlows(int i, int j, int r, int c, double nodata,
+                         double *Sf) {
   BUF_SET(Sf, r, c, 0, i, j, 0.0);
   BUF_SET(Sf, r, c, 1, i, j, 0.0);
   BUF_SET(Sf, r, c, 2, i, j, 0.0);
   BUF_SET(Sf, r, c, 3, i, j, 0.0);
 }
 
-void sciddicaTFlowsComputation(int i, int j, int r, int c, double nodata, int *Xi, int *Xj, double *Sz, double *Sh, double *Sf, double p_r, double p_epsilon)
-{
+void sciddicaTFlowsComputation(int i, int j, int r, int c, double nodata,
+                               int *Xi, int *Xj, double *Sz, double *Sh,
+                               double *Sf, double p_r, double p_epsilon) {
   bool eliminated_cells[5] = {false, false, false, false, false};
   bool again;
   int cells_count;
@@ -200,15 +190,13 @@ void sciddicaTFlowsComputation(int i, int j, int r, int c, double nodata, int *X
   h = GET(Sh, c, i + Xi[4], j + Xj[4]);
   u[4] = z + h;
 
-  do
-  {
+  do {
     again = false;
     average = m;
     cells_count = 0;
 
     for (n = 0; n < 5; n++)
-      if (!eliminated_cells[n])
-      {
+      if (!eliminated_cells[n]) {
         average += u[n];
         cells_count++;
       }
@@ -217,8 +205,7 @@ void sciddicaTFlowsComputation(int i, int j, int r, int c, double nodata, int *X
       average /= cells_count;
 
     for (n = 0; n < 5; n++)
-      if ((average <= u[n]) && (!eliminated_cells[n]))
-      {
+      if ((average <= u[n]) && (!eliminated_cells[n])) {
         eliminated_cells[n] = true;
         again = true;
       }
@@ -234,14 +221,18 @@ void sciddicaTFlowsComputation(int i, int j, int r, int c, double nodata, int *X
     BUF_SET(Sf, r, c, 3, i, j, (average - u[4]) * p_r);
 }
 
-void sciddicaTWidthUpdate(int i, int j, int r, int c, double nodata, int *Xi, int *Xj, double *Sz, double *Sh, double *Sf)
-{
+void sciddicaTWidthUpdate(int i, int j, int r, int c, double nodata, int *Xi,
+                          int *Xj, double *Sz, double *Sh, double *Sf) {
   double h_next;
   h_next = GET(Sh, c, i, j);
-  h_next += BUF_GET(Sf, r, c, 3, i + Xi[1], j + Xj[1]) - BUF_GET(Sf, r, c, 0, i, j);
-  h_next += BUF_GET(Sf, r, c, 2, i + Xi[2], j + Xj[2]) - BUF_GET(Sf, r, c, 1, i, j);
-  h_next += BUF_GET(Sf, r, c, 1, i + Xi[3], j + Xj[3]) - BUF_GET(Sf, r, c, 2, i, j);
-  h_next += BUF_GET(Sf, r, c, 0, i + Xi[4], j + Xj[4]) - BUF_GET(Sf, r, c, 3, i, j);
+  h_next +=
+      BUF_GET(Sf, r, c, 3, i + Xi[1], j + Xj[1]) - BUF_GET(Sf, r, c, 0, i, j);
+  h_next +=
+      BUF_GET(Sf, r, c, 2, i + Xi[2], j + Xj[2]) - BUF_GET(Sf, r, c, 1, i, j);
+  h_next +=
+      BUF_GET(Sf, r, c, 1, i + Xi[3], j + Xj[3]) - BUF_GET(Sf, r, c, 2, i, j);
+  h_next +=
+      BUF_GET(Sf, r, c, 0, i + Xi[4], j + Xj[4]) - BUF_GET(Sf, r, c, 3, i, j);
 
   SET(Sh, c, i, j, h_next);
 }
@@ -249,22 +240,27 @@ void sciddicaTWidthUpdate(int i, int j, int r, int c, double nodata, int *Xi, in
 // ----------------------------------------------------------------------------
 // Function main()
 // ----------------------------------------------------------------------------
-int main(int argc, char **argv)
-{
+int main(int argc, char **argv) {
   int rows, cols;
   double nodata;
   readHeaderInfo(argv[HEADER_PATH_ID], rows, cols, nodata);
 
-  int r = rows;                     // r: grid rows
-  int c = cols;                     // c: grid columns
-  int i_start = 1, i_end = r - 1;   // [i_start,i_end[: kernels application range along the rows
-  int j_start = 1, j_end = c - 1;   // [i_start,i_end[: kernels application range along the rows
-  double *Sz;                       // Sz: substate (grid) containing the cells' altitude a.s.l.
-  double *Sh;                       // Sh: substate (grid) containing the cells' flow thickness
-  double *Sf;                       // Sf: 4 substates containing the flows towards the 4 neighs
-  int Xi[] = {0, -1, 0, 0, 1};      // Xj: von Neuman neighborhood row coordinates (see below)
-  int Xj[] = {0, 0, -1, 1, 0};      // Xj: von Neuman neighborhood col coordinates (see below)
-  double p_r = P_R;                 // p_r: minimization algorithm outflows dumping factor
+  int r = rows; // r: grid rows
+  int c = cols; // c: grid columns
+  int i_start = 1,
+      i_end =
+          r - 1; // [i_start,i_end[: kernels application range along the rows
+  int j_start = 1,
+      j_end =
+          c - 1; // [i_start,i_end[: kernels application range along the rows
+  double *Sz;    // Sz: substate (grid) containing the cells' altitude a.s.l.
+  double *Sh;    // Sh: substate (grid) containing the cells' flow thickness
+  double *Sf;    // Sf: 4 substates containing the flows towards the 4 neighs
+  int Xi[] = {0, -1, 0, 0,
+              1}; // Xj: von Neuman neighborhood row coordinates (see below)
+  int Xj[] = {0, 0, -1, 1,
+              0};   // Xj: von Neuman neighborhood col coordinates (see below)
+  double p_r = P_R; // p_r: minimization algorithm outflows dumping factor
   double p_epsilon = P_EPSILON;     // p_epsilon: frictional parameter threshold
   int steps = atoi(argv[STEPS_ID]); // steps: simulation steps
 
@@ -273,13 +269,13 @@ int main(int argc, char **argv)
   int dim_y = 32;
   dim3 block_size(dim_x, dim_y, 1);
   dim3 grid_size(ceil(n / dim_x), ceil(n / dim_y), 1);
-  printf("%d, %d, %d\n", grid_size.x, grid_size.y, grid_size.z);
 
   // The adopted von Neuman neighborhood
   // Format: flow_index:cell_label:(row_index,col_index)
   //
-  //   cell_label in [0,1,2,3,4]: label assigned to each cell in the neighborhood
-  //   flow_index in   [0,1,2,3]: outgoing flow indices in Sf from cell 0 to the others
+  //   cell_label in [0,1,2,3,4]: label assigned to each cell in the
+  //   neighborhood flow_index in   [0,1,2,3]: outgoing flow indices in Sf from
+  //   cell 0 to the others
   //       (row_index,col_index): 2D relative indices of the cells
   //
   //               |0:1:(-1, 0)|
@@ -288,23 +284,24 @@ int main(int argc, char **argv)
   //
   //
 
-  Sz = addLayer2D(r, c);                  // Allocates the Sz substate grid
-  Sh = addLayer2D(r, c);                  // Allocates the Sh substate grid
-  Sf = addLayer2D(ADJACENT_CELLS * r, c); // Allocates the Sf substates grid,
-                                          //   having one layer for each adjacent cell
+  Sz = addLayer2D(r, c); // Allocates the Sz substate grid
+  Sh = addLayer2D(r, c); // Allocates the Sh substate grid
+  Sf = addLayer2D(ADJACENT_CELLS * r,
+                  c); // Allocates the Sf substates grid,
+                      //   having one layer for each adjacent cell
 
   loadGrid2D(Sz, r, c, argv[DEM_PATH_ID]);    // Load Sz from file
   loadGrid2D(Sh, r, c, argv[SOURCE_PATH_ID]); // Load Sh from file
 
-  // Apply the init kernel (elementary process) to the whole domain grid (cellular space)
+  // Apply the init kernel (elementary process) to the whole domain grid
+  // (cellular space)
   sciddicaTSimulationInitKernel<<<grid_size, block_size>>>(r, c, Sz, Sh);
   gpuErrchk(cudaPeekAtLastError());
   gpuErrchk(cudaDeviceSynchronize());
 
   util::Timer cl_timer;
   // simulation loop
-  for (int s = 0; s < steps; ++s)
-  {
+  for (int s = 0; s < steps; ++s) {
     // Apply the resetFlow kernel to the whole domain
 #pragma omp parallel for
     for (int i = i_start; i < i_end; i++)
@@ -315,7 +312,8 @@ int main(int argc, char **argv)
 #pragma omp parallel for
     for (int i = i_start; i < i_end; i++)
       for (int j = j_start; j < j_end; j++)
-        sciddicaTFlowsComputation(i, j, r, c, nodata, Xi, Xj, Sz, Sh, Sf, p_r, p_epsilon);
+        sciddicaTFlowsComputation(i, j, r, c, nodata, Xi, Xj, Sz, Sh, Sf, p_r,
+                                  p_epsilon);
 
         // Apply the WidthUpdate mass balance kernel to the whole domain
 #pragma omp parallel for
