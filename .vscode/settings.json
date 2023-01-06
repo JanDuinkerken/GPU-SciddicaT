@@ -1,5 +1,7 @@
 {
     "files.associations": {
-        "cmath": "cpp"
+        "cmath": "cpp",
+        "system_error": "cpp",
+        "type_traits": "cpp"
     }
 }

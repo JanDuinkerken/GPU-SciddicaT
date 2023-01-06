@@ -23,14 +23,6 @@
 // ----------------------------------------------------------------------------
 // Tiled Halo Cell parameters
 // ----------------------------------------------------------------------------
-
-/*
-TILE_WIDTH = sqrt(max_shared_memory/sizeof(datatype)) - MASK_WIDTH + 1
-Derived from:
-max_shared_memory = (MASK_WIDTH + TILE_WIDTH - 1)^2 * sizeof(datatype)
-max_shared_memory can be queried using the CUDA API
-*/
-
 #define MASK_WIDTH 3
 #define TILE_WIDTH 30
 #define TILED_BLOCK_WIDTH (TILE_WIDTH + MASK_WIDTH - 1)
@@ -224,42 +216,42 @@ __global__ void sciddicaTFlowsComputationKernel(int r, int c, double nodata,
   __shared__ double Sz_ds[TILED_BLOCK_WIDTH][TILED_BLOCK_WIDTH];
   __shared__ double Sh_ds[TILED_BLOCK_WIDTH][TILED_BLOCK_WIDTH];
 
-  int row_index = TILE_WIDTH * blockIdx.y + threadIdx.y;
-  int col_index = TILE_WIDTH * blockIdx.x + threadIdx.x;
+  int row_index = TILE_WIDTH * blockIdx.x + threadIdx.x;
+  int col_index = TILE_WIDTH * blockIdx.y + threadIdx.y;
   int row_halo = row_index - MASK_WIDTH / 2;
   int col_halo = row_index - MASK_WIDTH / 2;
 
   if ((row_halo >= 1) && (row_halo < r - 1) && (col_halo >= 1) && (col_halo < c - 1))
   {
-    Sz_ds[threadIdx.y][threadIdx.x] = GET(Sz, c, row_halo, col_halo);
-    Sh_ds[threadIdx.y][threadIdx.x] = GET(Sh, c, row_halo, col_halo);
+    Sz_ds[threadIdx.x][threadIdx.y] = GET(Sz, c, row_halo, col_halo);
+    Sh_ds[threadIdx.x][threadIdx.y] = GET(Sh, c, row_halo, col_halo);
   }
   else
   {
-    Sz_ds[threadIdx.y][threadIdx.x] = nodata;
-    Sh_ds[threadIdx.y][threadIdx.x] = nodata;
+    Sz_ds[threadIdx.x][threadIdx.y] = nodata;
+    Sh_ds[threadIdx.x][threadIdx.y] = nodata;
   }
   __syncthreads();
 
   if (threadIdx.x >= 1 && threadIdx.x < TILE_WIDTH && threadIdx.y >= 1 && threadIdx.y < TILE_WIDTH)
   {
-    m = Sh_ds[threadIdx.y][threadIdx.x] - p_epsilon;
-    u[0] = Sz_ds[threadIdx.y][threadIdx.x] + p_epsilon;
+    m = Sh_ds[threadIdx.x][threadIdx.x] - p_epsilon;
+    u[0] = Sz_ds[threadIdx.x][threadIdx.x] + p_epsilon;
 
-    z = Sz_ds[threadIdx.y + Xi[1]][threadIdx.x + Xj[1]];
-    h = Sh_ds[threadIdx.y + Xi[1]][threadIdx.x + Xj[1]];
+    z = Sz_ds[threadIdx.x + Xj[1]][threadIdx.y + Xj[1]];
+    h = Sh_ds[threadIdx.x + Xj[1]][threadIdx.y + Xj[1]];
     u[1] = z + h;
 
-    z = Sz_ds[threadIdx.y + Xi[2]][threadIdx.x + Xj[2]];
-    h = Sh_ds[threadIdx.y + Xi[2]][threadIdx.x + Xj[2]];
+    z = Sz_ds[threadIdx.x + Xi[2]][threadIdx.y + Xj[2]];
+    h = Sh_ds[threadIdx.x + Xi[2]][threadIdx.y + Xj[2]];
     u[2] = z + h;
 
-    z = Sz_ds[threadIdx.y + Xi[3]][threadIdx.x + Xj[3]];
-    h = Sh_ds[threadIdx.y + Xi[3]][threadIdx.x + Xj[3]];
+    z = Sz_ds[threadIdx.x + Xi[3]][threadIdx.y + Xj[3]];
+    h = Sh_ds[threadIdx.x + Xi[3]][threadIdx.y + Xj[3]];
     u[3] = z + h;
 
-    z = Sz_ds[threadIdx.y + Xi[4]][threadIdx.x + Xj[4]];
-    h = Sh_ds[threadIdx.y + Xi[4]][threadIdx.x + Xj[4]];
+    z = Sz_ds[threadIdx.x + Xi[4]][threadIdx.y + Xj[4]];
+    h = Sh_ds[threadIdx.x + Xi[4]][threadIdx.y + Xj[4]];
     u[4] = z + h;
 
     do
@@ -296,6 +288,50 @@ __global__ void sciddicaTFlowsComputationKernel(int r, int c, double nodata,
       BUF_SET(Sf, r, c, 3, row_index, col_index, (average - u[4]) * p_r);
   }
 }
+
+
+
+//   int col_idx = 1 + threadIdx.x + TILE_WIDTH * blockIdx.x;
+//   int row_idx = 1 + threadIdx.y + TILE_WIDTH * blockIdx.y;
+//   long col_halo = col_idx - MASK_WIDTH / 2;
+//   long row_halo = row_idx - MASK_WIDTH / 2;
+
+//   __shared__ double Sz_ds[TILED_BUFFER_SIZE];
+//   __shared__ double Sh_ds[TILED_BUFFER_SIZE];
+
+//   if ((col_halo >= 1) && (col_halo < c - 1) && (row_halo >= 1) && (row_halo < r - 1))
+//   {
+//     Sz_ds[threadIdx.x + threadIdx.y * blockDim.x] = GET(Sz, c, row_halo, col_halo);
+//     Sh_ds[threadIdx.x + threadIdx.y * blockDim.x] = GET(Sh, c, row_halo, col_halo);
+//   }
+//   else
+//   { // populate ghost cells (outside of domain) with neutral elements w.r.t. operations performed on them
+//     Sz_ds[threadIdx.x + threadIdx.y * blockDim.x] = nodata;
+//     Sh_ds[threadIdx.x + threadIdx.y * blockDim.x] = nodata;
+//   }
+//   __syncthreads();
+
+//   if (threadIdx.x >= 1 && threadIdx.x < TILE_WIDTH && threadIdx.y >= 1 && threadIdx.y < TILE_WIDTH)
+//   {
+//     m = GET(Sh_ds, blockDim.x, threadIdx.y, threadIdx.x) - p_epsilon;
+//     u[0] = GET(Sz_ds, blockDim.x, threadIdx.y, threadIdx.x) + p_epsilon;
+
+//     z = GET(Sz_ds, blockDim.x, threadIdx.y + Xi[1], threadIdx.x + Xj[1]);
+//     h = GET(Sh_ds, blockDim.x, threadIdx.y + Xi[1], threadIdx.x + Xj[1]);
+//     u[1] = z + h;
+
+//     z = GET(Sz_ds, blockDim.x, threadIdx.y + Xi[2], threadIdx.x + Xj[2]);
+//     h = GET(Sh_ds, blockDim.x, threadIdx.y + Xi[2], threadIdx.x + Xj[2]);
+//     u[2] = z + h;
+
+//     z = GET(Sz_ds, blockDim.x, threadIdx.y + Xi[3], threadIdx.x + Xj[3]);
+//     h = GET(Sh_ds, blockDim.x, threadIdx.y + Xi[3], threadIdx.x + Xj[3]);
+//     u[3] = z + h;
+
+//     z = GET(Sz_ds, blockDim.x, threadIdx.y + Xi[4], threadIdx.x + Xj[4]);
+//     h = GET(Sh_ds, blockDim.x, threadIdx.y + Xi[4], threadIdx.x + Xj[4]);
+//     u[4] = z + h;
+
 
 // This kernel benefits from a tiled implementation
 __global__ void sciddicaTWidthUpdateKernel(int r, int c, double nodata, int *Xi,
