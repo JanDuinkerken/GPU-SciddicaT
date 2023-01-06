@@ -21,6 +21,22 @@
 #define STRLEN 256
 
 // ----------------------------------------------------------------------------
+// Tiled Halo Cell parameters
+// ----------------------------------------------------------------------------
+
+/* 
+TILE_WIDTH = sqrt(max_shared_memory/sizeof(datatype)) - MASK_WIDTH + 1
+Derived from:
+max_shared_memory = (MASK_WIDTH + TILE_WIDTH - 1)^2 * sizeof(datatype)
+max_shared_memory can be queried using the CUDA API
+*/
+
+#define MASK_WIDTH 3
+#define TILE_WIDTH 30
+#define TILED_BLOCK_WIDTH (TILE_WIDTH + MASK_WIDTH - 1)
+#define TILED_BUFFER_SIZE (TILED_BLOCK_WIDTH * TILED_BLOCK_WIDTH)
+
+// ----------------------------------------------------------------------------
 // Read/Write access macros linearizing single/multy layer buffer 2D indices
 // ----------------------------------------------------------------------------
 #define SET(M, columns, i, j, value) ((M)[(((i) * (columns)) + (j))] = (value))
@@ -141,7 +157,7 @@ double *addLayer2D(int rows, int columns)
 }
 
 // ----------------------------------------------------------------------------
-// init kernel, called once before the simulation loop
+// init kernel, called once before the simulation loop (Does not benefit of a tiled implementation)
 // ----------------------------------------------------------------------------
 __global__ void sciddicaTSimulationInitKernel(int r, int c, double *Sz,
                                               double *Sh)
@@ -171,6 +187,7 @@ __global__ void sciddicaTSimulationInitKernel(int r, int c, double *Sz,
 // computing kernels, aka elementary processes in the XCA terminology
 // ----------------------------------------------------------------------------
 
+// This kernel does not benefit from a tiled implementation
 __global__ void sciddicaTResetFlowsKernel(int r, int c, double nodata, double *Sf)
 {
   int row_index = threadIdx.y + blockDim.y * blockIdx.y;
@@ -190,6 +207,7 @@ __global__ void sciddicaTResetFlowsKernel(int r, int c, double nodata, double *S
   }
 }
 
+// This kernel benefits from a tiled implementation
 __global__ void sciddicaTFlowsComputationKernel(int r, int c, double nodata,
                                                 int *Xi, int *Xj, double *Sz, double *Sh,
                                                 double *Sf, double p_r, double p_epsilon)
@@ -203,66 +221,83 @@ __global__ void sciddicaTFlowsComputationKernel(int r, int c, double nodata,
   int n;
   double z, h;
 
-  int row_index = threadIdx.y + blockDim.y * blockIdx.y;
-  int col_index = threadIdx.x + blockDim.x * blockIdx.x;
-  int row_stride = blockDim.y * gridDim.y;
-  int col_stride = blockDim.x * gridDim.x;
+  __shared__ double Sz_ds[TILED_BLOCK_WIDTH] [TILED_BLOCK_WIDTH];
+  __shared__ double Sh_ds[TILED_BLOCK_WIDTH] [TILED_BLOCK_WIDTH];
 
-  for (int row = row_index + 1; row < r - 1; row += row_stride)
+  int row_index = TILE_WIDTH * blockIdx.y + threadIdx.y;
+  int col_index =TILE_WIDTH * blockIdx.x + threadIdx.x;
+  int row_halo = row_index - MASK_WIDTH / 2;
+  int col_halo = row_index - MASK_WIDTH / 2;
+
+  if ((row_halo >= 1) && (row_halo < r - 1) && (col_halo >= 1) && (col_halo < c - 1))
   {
-    for (int col = col_index + 1; col < c - 1; col += col_stride)
+    Sz_ds[threadIdx.y] [threadIdx.x] = GET(Sz, c, row_halo, col_halo);
+    Sh_ds[threadIdx.y] [threadIdx.x] = GET(Sh, c, row_halo, col_halo);
+  }
+  else
+  {
+    Sz_ds[threadIdx.y] [threadIdx.x]  = nodata;
+    Sh_ds[threadIdx.y] [threadIdx.x] = nodata;
+  }
+  __syncthreads();
+
+  if (threadIdx.x >= 1 && threadIdx.x < TILE_WIDTH && threadIdx.y >= 1 && threadIdx.y < TILE_WIDTH)
+  {
+    m = Sh_ds[threadIdx.y][threadIdx.x] - p_epsilon;
+    u[0] = Sz_ds[threadIdx.y][threadIdx.x] + p_epsilon;
+
+    z = Sz_ds[threadIdx.y + Xi[1]][threadIdx.x + Xj[1]];
+    h = Sh_ds[threadIdx.y + Xi[1]][threadIdx.x + Xj[1]];
+    u[1] = z + h;
+
+    z = Sz_ds[threadIdx.y + Xi[2]][threadIdx.x + Xj[2]];
+    h = Sh_ds[threadIdx.y + Xi[2]][threadIdx.x + Xj[2]];
+    u[2] = z + h;
+
+    z = Sz_ds[threadIdx.y + Xi[3]][threadIdx.x + Xj[3]];
+    h = Sh_ds[threadIdx.y + Xi[3]][threadIdx.x + Xj[3]];
+    u[3] = z + h;
+
+    z = Sz_ds[threadIdx.y + Xi[4]][threadIdx.x + Xj[4]];
+    h = Sh_ds[threadIdx.y + Xi[4]][threadIdx.x + Xj[4]];
+    u[4] = z + h;
+
+    do
     {
-      m = GET(Sh, c, row, col) - p_epsilon;
-      u[0] = GET(Sz, c, row, col) + p_epsilon;
-      z = GET(Sz, c, row + Xi[1], col + Xj[1]);
-      h = GET(Sh, c, row + Xi[1], col + Xj[1]);
-      u[1] = z + h;
-      z = GET(Sz, c, row + Xi[2], col + Xj[2]);
-      h = GET(Sh, c, row + Xi[2], col + Xj[2]);
-      u[2] = z + h;
-      z = GET(Sz, c, row + Xi[3], col + Xj[3]);
-      h = GET(Sh, c, row + Xi[3], col + Xj[3]);
-      u[3] = z + h;
-      z = GET(Sz, c, row + Xi[4], col + Xj[4]);
-      h = GET(Sh, c, row + Xi[4], col + Xj[4]);
-      u[4] = z + h;
+      again = false;
+      average = m;
+      cells_count = 0;
 
-      do
-      {
-        again = false;
-        average = m;
-        cells_count = 0;
+      for (n = 0; n < 5; n++)
+        if (!eliminated_cells[n])
+        {
+          average += u[n];
+          cells_count++;
+        }
 
-        for (n = 0; n < 5; n++)
-          if (!eliminated_cells[n])
-          {
-            average += u[n];
-            cells_count++;
-          }
+      if (cells_count != 0)
+        average /= cells_count;
 
-        if (cells_count != 0)
-          average /= cells_count;
+      for (n = 0; n < 5; n++)
+        if ((average <= u[n]) && (!eliminated_cells[n]))
+        {
+          eliminated_cells[n] = true;
+          again = true;
+        }
+    } while (again);
 
-        for (n = 0; n < 5; n++)
-          if ((average <= u[n]) && (!eliminated_cells[n]))
-          {
-            eliminated_cells[n] = true;
-            again = true;
-          }
-      } while (again);
-
-      if (!eliminated_cells[1])
-        BUF_SET(Sf, r, c, 0, row, col, (average - u[1]) * p_r);
-      if (!eliminated_cells[2])
-        BUF_SET(Sf, r, c, 1, row, col, (average - u[2]) * p_r);
-      if (!eliminated_cells[3])
-        BUF_SET(Sf, r, c, 2, row, col, (average - u[3]) * p_r);
-      if (!eliminated_cells[4])
-        BUF_SET(Sf, r, c, 3, row, col, (average - u[4]) * p_r);
-    }
+    if (!eliminated_cells[1])
+      BUF_SET(Sf, r, c, 0, row_index, col_index, (average - u[1]) * p_r);
+    if (!eliminated_cells[2])
+      BUF_SET(Sf, r, c, 1, row_index, col_index, (average - u[2]) * p_r);
+    if (!eliminated_cells[3])
+      BUF_SET(Sf, r, c, 2, row_index, col_index, (average - u[3]) * p_r);
+    if (!eliminated_cells[4])
+      BUF_SET(Sf, r, c, 3, row_index, col_index, (average - u[4]) * p_r);
   }
 }
 
+// This kernel benefits from a tiled implementation
 __global__ void sciddicaTWidthUpdateKernel(int r, int c, double nodata, int *Xi,
                                            int *Xj, double *Sz, double *Sh, double *Sf)
 {
@@ -312,13 +347,13 @@ int main(int argc, char **argv)
   gpuErrchk(cudaMallocManaged(&Xi, sizeof(int) * 5));
   gpuErrchk(cudaMallocManaged(&Xj, sizeof(int) * 5));
 
-// Xj: von Neuman neighborhood row coordinates (see below)
+  // Xj: von Neuman neighborhood row coordinates (see below)
   Xi[0] = 0;
   Xi[1] = -1;
   Xi[2] = 0;
   Xi[3] = 0;
   Xi[4] = 1;
-// Xj: von Neuman neighborhood col coordinates (see below)
+  // Xj: von Neuman neighborhood col coordinates (see below)
   Xj[0] = 0;
   Xj[1] = 0;
   Xj[2] = -1;
@@ -330,6 +365,10 @@ int main(int argc, char **argv)
   int steps = atoi(argv[STEPS_ID]); // steps: simulation steps
 
   int n = rows * cols;
+  dim3 tiled_block_size(TILED_BLOCK_WIDTH, TILED_BLOCK_WIDTH, 1); // == TILED_BUFFER_SIZE
+  dim3 tiled_grid_size(ceil(sqrt(n / (TILE_WIDTH * TILE_WIDTH))), ceil(sqrt(n / (TILE_WIDTH * TILE_WIDTH))), 1);
+
+  // Not all kernels are going to use a tiled implementation so we keep the normal grid and block size variables
   int dim_x = 32;
   int dim_y = 32;
   dim3 block_size(dim_x, dim_y, 1);
@@ -373,7 +412,7 @@ int main(int argc, char **argv)
     gpuErrchk(cudaPeekAtLastError());
     gpuErrchk(cudaDeviceSynchronize());
     // Apply the FlowComputation kernel to the whole domain
-    sciddicaTFlowsComputationKernel<<<grid_size, block_size>>>(r, c, nodata, Xi, Xj, Sz, Sh, Sf, p_r, p_epsilon);
+    sciddicaTFlowsComputationKernel<<<tiled_grid_size, tiled_block_size>>>(r, c, nodata, Xi, Xj, Sz, Sh, Sf, p_r, p_epsilon);
     gpuErrchk(cudaPeekAtLastError());
     gpuErrchk(cudaDeviceSynchronize());
     // Apply the WidthUpdate mass balance kernel to the whole domain
