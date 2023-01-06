@@ -24,7 +24,7 @@
 // Tiled Halo Cell parameters
 // ----------------------------------------------------------------------------
 
-/* 
+/*
 TILE_WIDTH = sqrt(max_shared_memory/sizeof(datatype)) - MASK_WIDTH + 1
 Derived from:
 max_shared_memory = (MASK_WIDTH + TILE_WIDTH - 1)^2 * sizeof(datatype)
@@ -221,23 +221,23 @@ __global__ void sciddicaTFlowsComputationKernel(int r, int c, double nodata,
   int n;
   double z, h;
 
-  __shared__ double Sz_ds[TILED_BLOCK_WIDTH] [TILED_BLOCK_WIDTH];
-  __shared__ double Sh_ds[TILED_BLOCK_WIDTH] [TILED_BLOCK_WIDTH];
+  __shared__ double Sz_ds[TILED_BLOCK_WIDTH][TILED_BLOCK_WIDTH];
+  __shared__ double Sh_ds[TILED_BLOCK_WIDTH][TILED_BLOCK_WIDTH];
 
   int row_index = TILE_WIDTH * blockIdx.y + threadIdx.y;
-  int col_index =TILE_WIDTH * blockIdx.x + threadIdx.x;
+  int col_index = TILE_WIDTH * blockIdx.x + threadIdx.x;
   int row_halo = row_index - MASK_WIDTH / 2;
   int col_halo = row_index - MASK_WIDTH / 2;
 
   if ((row_halo >= 1) && (row_halo < r - 1) && (col_halo >= 1) && (col_halo < c - 1))
   {
-    Sz_ds[threadIdx.y] [threadIdx.x] = GET(Sz, c, row_halo, col_halo);
-    Sh_ds[threadIdx.y] [threadIdx.x] = GET(Sh, c, row_halo, col_halo);
+    Sz_ds[threadIdx.y][threadIdx.x] = GET(Sz, c, row_halo, col_halo);
+    Sh_ds[threadIdx.y][threadIdx.x] = GET(Sh, c, row_halo, col_halo);
   }
   else
   {
-    Sz_ds[threadIdx.y] [threadIdx.x]  = nodata;
-    Sh_ds[threadIdx.y] [threadIdx.x] = nodata;
+    Sz_ds[threadIdx.y][threadIdx.x] = nodata;
+    Sh_ds[threadIdx.y][threadIdx.x] = nodata;
   }
   __syncthreads();
 
