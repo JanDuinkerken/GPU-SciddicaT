@@ -1,5 +1,4 @@
 #include "util.hpp"
-#include <omp.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
@@ -182,9 +181,9 @@ __global__ void sciddicaTSimulationInitKernel(int r, int c, double *Sz,
 // This kernel does not benefit from a tiled implementation
 __global__ void sciddicaTResetFlowsKernel(int r, int c, double nodata, double *Sf)
 {
-  int row_index = threadIdx.y + blockDim.y * blockIdx.y;
-  int col_index = threadIdx.x + blockDim.x * blockIdx.x;
+  int row_index = blockDim.y * blockIdx.y + threadIdx.y;
   int row_stride = blockDim.y * gridDim.y;
+  int col_index = blockDim.x * blockIdx.x + threadIdx.x;
   int col_stride = blockDim.x * gridDim.x;
 
   for (int row = row_index + 1; row < r - 1; row += row_stride)
@@ -200,7 +199,7 @@ __global__ void sciddicaTResetFlowsKernel(int r, int c, double nodata, double *S
 }
 
 // This kernel benefits from a tiled implementation
-__global__ void sciddicaTFlowsComputationKernel(int r, int c, double nodata, int *Xi, int *Xj, double *Sz, double *Sh, double *Sf, double p_r, double p_epsilon)
+__global__ void sciddicaTFlowsComputationSimpleKernel(int r, int c, double nodata, int *Xi, int *Xj, double *Sz, double *Sh, double *Sf, double p_r, double p_epsilon)
 {
   int col_index = threadIdx.x + blockDim.x * blockIdx.x;
   int row_index = threadIdx.y + blockDim.y * blockIdx.y;
@@ -271,195 +270,98 @@ __global__ void sciddicaTFlowsComputationKernel(int r, int c, double nodata, int
   }
 }
 
-// __global__ void sciddicaTFlowsComputationHaloKernel(int r, int c, double nodata,
-//                                                     int *Xi, int *Xj, double *Sz, double *Sh,
-//                                                     double *Sf, double p_r, double p_epsilon)
-// {
-//   bool eliminated_cells[5] = {false, false, false, false, false};
-//   bool again;
-//   int cells_count;
-//   double average;
-//   double m;
-//   double u[5];
-//   int n;
-//   double z, h;
+__global__ void sciddicaTFlowsComputationKernel(int r, int c, double nodata, int *Xi, int *Xj, double *Sz, double *Sh, double *Sf, double p_r, double p_epsilon)
+{
+  int col_index = threadIdx.x + blockDim.x * blockIdx.x;
+  int row_index = threadIdx.y + blockDim.y * blockIdx.y;
 
-//   __shared__ double Sz_ds[T_BLOCK_WIDTH][T_BLOCK_WIDTH];
-//   __shared__ double Sh_ds[T_BLOCK_WIDTH][T_BLOCK_WIDTH];
+  bool eliminated_cells[5] = {false, false, false, false, false};
+  bool again;
+  int cells_count;
+  double average;
+  double m;
+  double u[5];
+  int n;
+  double z = 0, h = 0;
 
-//   int col_index = threadIdx.x + T_WIDTH * blockIdx.x;
-//   int row_index = threadIdx.y + T_WIDTH * blockIdx.y;
-//   long col_halo = col_index - MAX_MASK_WIDTH / 2;
-//   long row_halo = row_index - MAX_MASK_WIDTH / 2;
+  __shared__ double Sz_ds[T_WIDTH][T_WIDTH];
+  __shared__ double Sh_ds[T_WIDTH][T_WIDTH];
 
-//   if ((row_halo >= 0) && (row_halo < r) && (col_halo >= 0) && (col_halo < c))
-//   {
-//     Sz_ds[threadIdx.y][threadIdx.x] = GET(Sz, c, row_halo, col_halo);
-//     Sh_ds[threadIdx.y][threadIdx.x] = GET(Sh, c, row_halo, col_halo);
-//   }
-//   else
-//   {
-//     Sz_ds[threadIdx.y][threadIdx.x] = nodata;
-//     Sh_ds[threadIdx.y][threadIdx.x] = nodata;
-//   }
-//   __syncthreads();
+  Sz_ds[threadIdx.y][threadIdx.x] = GET(Sz, c, row_index, col_index);
+  Sh_ds[threadIdx.y][threadIdx.x] = GET(Sh, c, row_index, col_index);
+  __syncthreads();
 
-//   if (threadIdx.y >= 1 && threadIdx.y < T_WIDTH && threadIdx.x >= 1 && threadIdx.x < T_WIDTH)
-//   {
-//     m = Sh_ds[threadIdx.y][threadIdx.x] - p_epsilon;
-//     u[0] = Sz_ds[threadIdx.y][threadIdx.x] + p_epsilon;
+  int tile_start_x = blockIdx.x * blockDim.x;
+  int next_tile_start_x = ((blockIdx.x + 1) * blockDim.x);
+  int tile_start_y = blockIdx.y * blockDim.y;
+  int next_tile_start_y = ((blockIdx.y + 1) * blockDim.y);
 
-//     z = Sz_ds[threadIdx.y + Xi[1]][threadIdx.x + Xj[1]];
-//     h = Sh_ds[threadIdx.y + Xi[1]][threadIdx.x + Xj[1]];
-//     u[1] = z + h;
+  m = Sh_ds[threadIdx.y][threadIdx.x] - p_epsilon;
+  u[0] = Sz_ds[threadIdx.y][threadIdx.x] + p_epsilon;
 
-//     z = Sz_ds[threadIdx.y + Xi[2]][threadIdx.x + Xj[2]];
-//     h = Sh_ds[threadIdx.y + Xi[2]][threadIdx.x + Xj[2]];
-//     u[2] = z + h;
+  int index_x;
+  int index_y;
 
-//     z = Sz_ds[threadIdx.y + Xi[3]][threadIdx.x + Xj[3]];
-//     h = Sh_ds[threadIdx.y + Xi[3]][threadIdx.x + Xj[3]];
-//     u[3] = z + h;
+  for (int tmp = 0; tmp < MAX_MASK_WIDTH; tmp++)
+  {
+    index_y = row_index - (MAX_MASK_WIDTH / 2) + Xi[tmp + 1];
+    index_x = col_index - (MAX_MASK_WIDTH / 2) + Xj[tmp + 1];
 
-//     z = Sz_ds[threadIdx.y + Xi[4]][threadIdx.x + Xj[4]];
-//     h = Sh_ds[threadIdx.y + Xi[4]][threadIdx.x + Xj[4]];
-//     u[4] = z + h;
+    if ((index_x >= 0) && (index_x < c) && (index_y >= 0) && (index_y < r))
+    {
+      if ((index_x >= tile_start_x) && (index_x < next_tile_start_x) && (index_y >= tile_start_y) && (index_y < next_tile_start_y))
+      {
+        z = Sz_ds[threadIdx.y + Xi[tmp + 1]][threadIdx.x + MAX_MASK_WIDTH / 2 + Xj[tmp + 1]];
+        h = Sh_ds[threadIdx.y + Xi[tmp + 1]][threadIdx.x + MAX_MASK_WIDTH / 2 + Xj[tmp + 1]];
+      }
+      else
+      {
+        z = GET(Sz, c, index_y, index_x);
+        h = GET(Sh, c, index_y, index_x);
+      }
+    }
+    u[tmp + 1] = z + h;
+  }
 
-//     do
-//     {
-//       again = false;
-//       average = m;
-//       cells_count = 0;
+  do
+  {
+    again = false;
+    average = m;
+    cells_count = 0;
 
-//       for (n = 0; n < 5; n++)
-//         if (!eliminated_cells[n])
-//         {
-//           average += u[n];
-//           cells_count++;
-//         }
+    for (n = 0; n < 5; n++)
+      if (!eliminated_cells[n])
+      {
+        average += u[n];
+        cells_count++;
+      }
 
-//       if (cells_count != 0)
-//       {
-//         average /= cells_count;
-//       }
+    if (cells_count != 0)
+      average /= cells_count;
 
-//       for (n = 0; n < 5; n++)
-//       {
-//         if ((average <= u[n]) && (!eliminated_cells[n]))
-//         {
-//           eliminated_cells[n] = true;
-//           again = true;
-//         }
-//       }
-//     } while (again);
+    for (n = 0; n < 5; n++)
+      if ((average <= u[n]) && (!eliminated_cells[n]))
+      {
+        eliminated_cells[n] = true;
+        again = true;
+      }
+  } while (again);
 
-//     if (!eliminated_cells[1])
-//     {
-//       BUF_SET(Sf, r, c, 0, row_index, col_index, (average - u[1]) * p_r);
-//     }
-//     if (!eliminated_cells[2])
-//     {
-//       BUF_SET(Sf, r, c, 1, row_index, col_index, (average - u[2]) * p_r);
-//     }
-//     if (!eliminated_cells[3])
-//     {
-//       BUF_SET(Sf, r, c, 2, row_index, col_index, (average - u[3]) * p_r);
-//     }
-//     if (!eliminated_cells[4])
-//     {
-//       BUF_SET(Sf, r, c, 3, row_index, col_index, (average - u[4]) * p_r);
-//     }
-//   }
-// }
+  if (!eliminated_cells[0])
+    BUF_SET(Sf, r, c, 0, row_index, col_index, (average - u[0]) * p_r);
 
-// __global__ void sciddicaTFlowsComputationHaloKernel(int r, int c, double nodata, int *Xi, int *Xj, double *Sz, double *Sh, double *Sf, double p_r, double p_epsilon)
-// {
-//   int col_index = 1 + threadIdx.x + T_WIDTH * blockIdx.x;
-//   int row_index = 1 + threadIdx.y + T_WIDTH * blockIdx.y;
-//   long col_halo = col_index - MAX_MASK_WIDTH / 2;
-//   long row_halo = row_index - MAX_MASK_WIDTH / 2;
+  if (!eliminated_cells[1])
+    BUF_SET(Sf, r, c, 1, row_index, col_index, (average - u[1]) * p_r);
 
-//   bool eliminated_cells[5] = {false, false, false, false, false};
-//   bool again;
-//   int cells_count;
-//   double average;
-//   double m;
-//   double u[5];
-//   int n;
-//   double z, h;
+  if (!eliminated_cells[2])
+    BUF_SET(Sf, r, c, 2, row_index, col_index, (average - u[2]) * p_r);
 
-//   __shared__ double Sz_ds[T_BUFF_SIZE];
-//   __shared__ double Sh_ds[T_BUFF_SIZE];
-
-//   // Phase 1: All block threads copy values into the block's shared memory
-//   if ((col_halo >= 0) && (col_halo < c) && (row_halo >= 0) && (row_halo < r))
-//   {
-//     Sz_ds[threadIdx.x + threadIdx.y * blockDim.x] = GET(Sz, c, row_halo, col_halo);
-//     Sh_ds[threadIdx.x + threadIdx.y * blockDim.x] = GET(Sh, c, row_halo, col_halo);
-//   }
-//   else
-//   { // populate ghost cells (outside of domain) with neutral elements w.r.t. operations performed on them
-//     Sz_ds[threadIdx.x + threadIdx.y * blockDim.x] = nodata;
-//     Sh_ds[threadIdx.x + threadIdx.y * blockDim.x] = nodata;
-//   }
-//   __syncthreads();
-
-//   // phase 2: Tile threads compute outputs
-//   if (threadIdx.x >= 1 && threadIdx.x < T_WIDTH && threadIdx.y >= 1 && threadIdx.y < T_WIDTH)
-//   {
-//     m = GET(Sh_ds, blockDim.x, threadIdx.y, threadIdx.x) - p_epsilon;
-//     u[0] = GET(Sz_ds, blockDim.x, threadIdx.y, threadIdx.x) + p_epsilon;
-
-//     z = GET(Sz_ds, blockDim.x, threadIdx.y + Xi[1], threadIdx.x + Xj[1]);
-//     h = GET(Sh_ds, blockDim.x, threadIdx.y + Xi[1], threadIdx.x + Xj[1]);
-//     u[1] = z + h;
-
-//     z = GET(Sz_ds, blockDim.x, threadIdx.y + Xi[2], threadIdx.x + Xj[2]);
-//     h = GET(Sh_ds, blockDim.x, threadIdx.y + Xi[2], threadIdx.x + Xj[2]);
-//     u[2] = z + h;
-
-//     z = GET(Sz_ds, blockDim.x, threadIdx.y + Xi[3], threadIdx.x + Xj[3]);
-//     h = GET(Sh_ds, blockDim.x, threadIdx.y + Xi[3], threadIdx.x + Xj[3]);
-//     u[3] = z + h;
-
-//     z = GET(Sz_ds, blockDim.x, threadIdx.y + Xi[4], threadIdx.x + Xj[4]);
-//     h = GET(Sh_ds, blockDim.x, threadIdx.y + Xi[4], threadIdx.x + Xj[4]);
-//     u[4] = z + h;
-
-//     do
-//     {
-//       again = false;
-//       average = m;
-//       cells_count = 0;
-
-//       for (n = 0; n < 5; ++n)
-//         if (!eliminated_cells[n])
-//         {
-//           average += u[n];
-//           ++cells_count;
-//         }
-
-//       if (cells_count != 0)
-//         average /= cells_count;
-
-//       for (n = 0; n < 5; ++n)
-//         if ((average <= u[n]) && (!eliminated_cells[n]))
-//         {
-//           eliminated_cells[n] = true;
-//           again = true;
-//         }
-//     } while (again);
-
-//     for (int cnt = 0; cnt <= MAX_MASK_WIDTH; ++cnt)
-//     {
-//       if (!eliminated_cells[cnt + 1])
-//         BUF_SET(Sf, r, c, cnt, row_index, col_index, (average - u[cnt + 1]) * p_r);
-//     }
-//   }
-// }
+  if (!eliminated_cells[3])
+    BUF_SET(Sf, r, c, 3, row_index, col_index, (average - u[3]) * p_r);
+}
 
 // This kernel benefits from a tiled implementation
-__global__ void sciddicaTWidthUpdateKernel(int r, int c, double nodata, int *Xi,
+__global__ void sciddicaTWidthUpdateSimpleKernel(int r, int c, double nodata, int *Xi,
                                            int *Xj, double *Sz, double *Sh, double *Sf)
 {
   int row_index = threadIdx.y + blockDim.y * blockIdx.y;
@@ -487,43 +389,46 @@ __global__ void sciddicaTWidthUpdateKernel(int r, int c, double nodata, int *Xi,
   }
 }
 
-__global__ void sciddicaTWidthUpdateHaloKernel(int r, int c, double nodata, int *Xi, int *Xj, double *Sz, double *Sh, double *Sf)
+__global__ void sciddicaTWidthUpdateKernel(int r, int c, double nodata, int *Xi, int *Xj, double *Sz, double *Sh, double *Sf)
 {
-  int row_index = 1 + threadIdx.y + T_WIDTH * blockIdx.y;
-  int col_index = 1 + threadIdx.x + T_WIDTH * blockIdx.x;
-  long row_halo = row_index - MAX_MASK_WIDTH / 2;
-  long col_halo = col_index - MAX_MASK_WIDTH / 2;
+  int col_index = threadIdx.x + blockDim.x * blockIdx.x;
+  int row_index = threadIdx.y + blockDim.y * blockIdx.y;
 
-  double h_next = 0.0;
+  double h_next;
 
-  __shared__ double Sf_ds[T_BLOCK_WIDTH * ADJACENT_CELLS][T_BLOCK_WIDTH];
+  __shared__ double Sf_ds[T_WIDTH * ADJACENT_CELLS][T_WIDTH];
 
-  if ((col_halo >= 0) && (col_halo < c) && (row_halo >= 0) && (row_halo < r))
-  {
-    Sf_ds[threadIdx.y][threadIdx.x] = BUF_GET(Sf, r, c, 0, row_halo, col_halo);
-    Sf_ds[threadIdx.y + T_BLOCK_WIDTH][threadIdx.x] = BUF_GET(Sf, r, c, 1, row_halo, col_halo);
-    Sf_ds[threadIdx.y + 2 * T_BLOCK_WIDTH][threadIdx.x] = BUF_GET(Sf, r, c, 2, row_halo, col_halo);
-    Sf_ds[threadIdx.y + 3 * T_BLOCK_WIDTH][threadIdx.x] = BUF_GET(Sf, r, c, 3, row_halo, col_halo);
-  }
-  else
-  {
-    Sf_ds[threadIdx.y][threadIdx.x] = nodata;
-  }
+  Sf_ds[threadIdx.y][threadIdx.x] = BUF_GET(Sf, r, c, 0, row_index, col_index);
+  Sf_ds[threadIdx.y + T_WIDTH][threadIdx.x] = BUF_GET(Sf, r, c, 1, row_index, col_index);
+  Sf_ds[threadIdx.y + T_WIDTH * 2][threadIdx.x] = BUF_GET(Sf, r, c, 2, row_index, col_index);
+  Sf_ds[threadIdx.y + T_WIDTH * 3][threadIdx.x] = BUF_GET(Sf, r, c, 3, row_index, col_index);
   __syncthreads();
 
-  int index_i = threadIdx.y + MAX_MASK_WIDTH / 2;
-  int index_j = threadIdx.x + MAX_MASK_WIDTH / 2;
+  int tile_start_x = blockIdx.x * blockDim.x;
+  int next_tile_start_x = ((blockIdx.x + 1) * blockDim.x);
+  int tile_start_y = blockIdx.y * blockDim.y;
+  int next_tile_start_y = ((blockIdx.y + 1) * blockDim.y);
 
-  if (threadIdx.x < T_WIDTH && threadIdx.y < T_WIDTH)
+  h_next = GET(Sh, c, row_index, col_index);
+
+  for (int tmp = 0; tmp <= MAX_MASK_WIDTH; ++tmp)
   {
-    h_next = GET(Sh, c, row_index, col_index);
-    h_next += Sf_ds[index_i + Xi[1] + (T_BLOCK_WIDTH * 3)][index_j + Xj[1]] - Sf_ds[index_i][index_j];
-    h_next += Sf_ds[index_i + Xi[2] + (T_BLOCK_WIDTH * 2)][index_j + Xj[2]] - Sf_ds[index_i + T_BLOCK_WIDTH][index_j];
-    h_next += Sf_ds[index_i + Xi[3] + T_BLOCK_WIDTH][index_j + Xj[3]] - Sf_ds[index_i + (T_BLOCK_WIDTH * 2)][index_j];
-    h_next += Sf_ds[index_i + Xi[4]][index_j + Xj[4]] - Sf_ds[index_i + (T_BLOCK_WIDTH * 3)][index_j];
-
-    SET(Sh, c, row_index, col_index, h_next);
+    int n_index_x = col_index - (MAX_MASK_WIDTH / 2) + Xj[tmp + 1];
+    int n_index_y = row_index - (MAX_MASK_WIDTH / 2) + Xi[tmp + 1];
+    if ((n_index_x >= 0) && (n_index_x < c) && (n_index_y >= 0) && (n_index_y < r))
+    {
+      if ((n_index_x >= tile_start_x) && (n_index_x < next_tile_start_x) && (n_index_y >= tile_start_y) && (n_index_y < next_tile_start_y))
+      {
+        h_next += Sf_ds[threadIdx.y + T_WIDTH * (MAX_MASK_WIDTH - tmp) + Xi[tmp + 1]][threadIdx.x + Xj[tmp + 1]] - Sf_ds[threadIdx.y + T_WIDTH * tmp][threadIdx.x];
+      }
+      else
+      { // try to get a L2 cache hit (best case, otherwise global memory in DRAM has to be accessed)
+        h_next += BUF_GET(Sf, r, c, (MAX_MASK_WIDTH - tmp), n_index_y, n_index_x) - BUF_GET(Sf, r, c, tmp, n_index_y, n_index_x);
+      }
+    }
   }
+
+  SET(Sh, c, row_index, col_index, h_next); // TODO check calculation results
 }
 
 // ----------------------------------------------------------------------------
@@ -564,7 +469,7 @@ int main(int argc, char **argv)
   double p_epsilon = P_EPSILON;     // p_epsilon: frictional parameter threshold
   int steps = atoi(argv[STEPS_ID]); // steps: simulation steps
 
-  dim3 tiled_block_size(T_BLOCK_WIDTH, T_BLOCK_WIDTH, 1); // == T_BUFF_SIZE
+  dim3 tiled_block_size(T_WIDTH, T_WIDTH, 1); // == T_BUFF_SIZE
   dim3 tiled_grid_size(ceil(rows / T_WIDTH), ceil(cols / T_WIDTH), 1);
 
   // Not all kernels are going to use a tiled implementation so we keep the normal grid and block size variables
@@ -612,11 +517,11 @@ int main(int argc, char **argv)
     gpuErrchk(cudaPeekAtLastError());
     gpuErrchk(cudaDeviceSynchronize());
     // Apply the FlowComputation kernel to the whole domain
-    sciddicaTFlowsComputationKernel<<<grid_size, block_size>>>(r, c, nodata, Xi, Xj, Sz, Sh, Sf, p_r, p_epsilon);
+    sciddicaTFlowsComputationKernel<<<tiled_grid_size, tiled_block_size>>>(r, c, nodata, Xi, Xj, Sz, Sh, Sf, p_r, p_epsilon);
     gpuErrchk(cudaPeekAtLastError());
     gpuErrchk(cudaDeviceSynchronize());
     // Apply the WidthUpdate mass balance kernel to the whole domain
-    sciddicaTWidthUpdateHaloKernel<<<tiled_grid_size, tiled_block_size>>>(r, c, nodata, Xi, Xj, Sz, Sh, Sf);
+    sciddicaTWidthUpdateKernel<<<tiled_grid_size, tiled_block_size>>>(r, c, nodata, Xi, Xj, Sz, Sh, Sf);
     gpuErrchk(cudaPeekAtLastError());
     gpuErrchk(cudaDeviceSynchronize());
   }
