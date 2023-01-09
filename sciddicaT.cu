@@ -234,27 +234,27 @@ __global__ void sciddicaTFlowsComputationHaloKernel(int r, int c, double nodata,
 
   if (row_index >= 1 && row_index < r - 1 && col_index >= 1 && col_index < c - 1)
   {
-    int index_x = threadIdx.y + MAX_MASK_WIDTH/2;
-    int index_y = threadIdx.x + MAX_MASK_WIDTH/2;
-    if (index_x >= 1 && index_x <= T_WIDTH && index_y >= 1 && index_y <= T_WIDTH)
+    int index_i = threadIdx.y + MAX_MASK_WIDTH/2;
+    int index_j = threadIdx.x + MAX_MASK_WIDTH/2;
+    if (index_i >= 1 && index_i <= T_WIDTH && index_j >= 1 && index_j <= T_WIDTH)
     {
-      m = Sh_ds[index_x][index_y] - p_epsilon;
-      u[0] = Sz_ds[index_x][index_y] + p_epsilon;
+      m = Sh_ds[index_i][index_j] - p_epsilon;
+      u[0] = Sz_ds[index_i][index_j] + p_epsilon;
 
-      z = Sz_ds[index_x + Xi[1]][index_y + Xj[1]];
-      h = Sh_ds[index_x + Xi[1]][index_y + Xj[1]];
+      z = Sz_ds[index_i + Xi[1]][index_j + Xj[1]];
+      h = Sh_ds[index_i + Xi[1]][index_j + Xj[1]];
       u[1] = z + h;
 
-      z = Sz_ds[index_x + Xi[2]][index_y + Xj[2]];
-      h = Sh_ds[index_x + Xi[2]][index_y + Xj[2]];
+      z = Sz_ds[index_i + Xi[2]][index_j + Xj[2]];
+      h = Sh_ds[index_i + Xi[2]][index_j + Xj[2]];
       u[2] = z + h;
 
-      z = Sz_ds[index_x + Xi[3]][index_y + Xj[3]];
-      h = Sh_ds[index_x + Xi[3]][index_y + Xj[3]];
+      z = Sz_ds[index_i + Xi[3]][index_j + Xj[3]];
+      h = Sh_ds[index_i + Xi[3]][index_j + Xj[3]];
       u[3] = z + h;
 
-      z = Sz_ds[index_x + Xi[4]][index_y + Xj[4]];
-      h = Sh_ds[index_x + Xi[4]][index_y + Xj[4]];
+      z = Sz_ds[index_i + Xi[4]][index_j + Xj[4]];
+      h = Sh_ds[index_i + Xi[4]][index_j + Xj[4]];
       u[4] = z + h;
 
       do
@@ -334,7 +334,6 @@ __global__ void sciddicaTWidthUpdateHaloKernel(int r, int c, double nodata, int 
   {
     int index_i = threadIdx.y + MAX_MASK_WIDTH / 2;
     int index_j = threadIdx.x + MAX_MASK_WIDTH / 2;
-    ;
     if (index_i >= 1 && index_i <= T_WIDTH && index_j >= 1 && index_j <= T_WIDTH)
     {
       h_next = GET(Sh, c, row_index, col_index);
