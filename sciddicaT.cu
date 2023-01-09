@@ -200,76 +200,76 @@ __global__ void sciddicaTResetFlowsKernel(int r, int c, double nodata, double *S
 }
 
 // This kernel benefits from a tiled implementation
-// __global__ void sciddicaTFlowsComputationKernel(int r, int c, double nodata, int *Xi, int *Xj, double *Sz, double *Sh, double *Sf, double p_r, double p_epsilon)
-// {
-//   int col_index = threadIdx.x + blockDim.x * blockIdx.x;
-//   int row_index = threadIdx.y + blockDim.y * blockIdx.y;
-//   int col_stride = blockDim.x * gridDim.x;
-//   int row_stride = blockDim.y * gridDim.y;
+__global__ void sciddicaTFlowsComputationKernel(int r, int c, double nodata, int *Xi, int *Xj, double *Sz, double *Sh, double *Sf, double p_r, double p_epsilon)
+{
+  int col_index = threadIdx.x + blockDim.x * blockIdx.x;
+  int row_index = threadIdx.y + blockDim.y * blockIdx.y;
+  int col_stride = blockDim.x * gridDim.x;
+  int row_stride = blockDim.y * gridDim.y;
 
-//   bool eliminated_cells[5] = {false, false, false, false, false};
-//   bool again;
-//   int cells_count;
-//   double average;
-//   double m;
-//   double u[5];
-//   int n;
-//   double z, h;
+  bool eliminated_cells[5] = {false, false, false, false, false};
+  bool again;
+  int cells_count;
+  double average;
+  double m;
+  double u[5];
+  int n;
+  double z, h;
 
-//   for (int row = row_index + 1; row < r - 1; row += row_stride)
-//   {
-//     for (int col = col_index + 1; col < c - 1; col += col_stride)
-//     {
-//       m = GET(Sh, c, row, col) - p_epsilon;
-//       u[0] = GET(Sz, c, row, col) + p_epsilon;
-//       z = GET(Sz, c, row + Xi[1], col + Xj[1]);
-//       h = GET(Sh, c, row + Xi[1], col + Xj[1]);
-//       u[1] = z + h;
-//       z = GET(Sz, c, row + Xi[2], col + Xj[2]);
-//       h = GET(Sh, c, row + Xi[2], col + Xj[2]);
-//       u[2] = z + h;
-//       z = GET(Sz, c, row + Xi[3], col + Xj[3]);
-//       h = GET(Sh, c, row + Xi[3], col + Xj[3]);
-//       u[3] = z + h;
-//       z = GET(Sz, c, row + Xi[4], col + Xj[4]);
-//       h = GET(Sh, c, row + Xi[4], col + Xj[4]);
-//       u[4] = z + h;
+  for (int row = row_index + 1; row < r - 1; row += row_stride)
+  {
+    for (int col = col_index + 1; col < c - 1; col += col_stride)
+    {
+      m = GET(Sh, c, row, col) - p_epsilon;
+      u[0] = GET(Sz, c, row, col) + p_epsilon;
+      z = GET(Sz, c, row + Xi[1], col + Xj[1]);
+      h = GET(Sh, c, row + Xi[1], col + Xj[1]);
+      u[1] = z + h;
+      z = GET(Sz, c, row + Xi[2], col + Xj[2]);
+      h = GET(Sh, c, row + Xi[2], col + Xj[2]);
+      u[2] = z + h;
+      z = GET(Sz, c, row + Xi[3], col + Xj[3]);
+      h = GET(Sh, c, row + Xi[3], col + Xj[3]);
+      u[3] = z + h;
+      z = GET(Sz, c, row + Xi[4], col + Xj[4]);
+      h = GET(Sh, c, row + Xi[4], col + Xj[4]);
+      u[4] = z + h;
 
-//       do
-//       {
-//         again = false;
-//         average = m;
-//         cells_count = 0;
+      do
+      {
+        again = false;
+        average = m;
+        cells_count = 0;
 
-//         for (n = 0; n < 5; ++n)
-//           if (!eliminated_cells[n])
-//           {
-//             average += u[n];
-//             ++cells_count;
-//           }
+        for (n = 0; n < 5; ++n)
+          if (!eliminated_cells[n])
+          {
+            average += u[n];
+            ++cells_count;
+          }
 
-//         if (cells_count != 0)
-//           average /= cells_count;
+        if (cells_count != 0)
+          average /= cells_count;
 
-//         for (n = 0; n < 5; ++n)
-//           if ((average <= u[n]) && (!eliminated_cells[n]))
-//           {
-//             eliminated_cells[n] = true;
-//             again = true;
-//           }
-//       } while (again);
+        for (n = 0; n < 5; ++n)
+          if ((average <= u[n]) && (!eliminated_cells[n]))
+          {
+            eliminated_cells[n] = true;
+            again = true;
+          }
+      } while (again);
 
-//       if (!eliminated_cells[1])
-//         BUF_SET(Sf, r, c, 0, row, col, (average - u[1]) * p_r);
-//       if (!eliminated_cells[2])
-//         BUF_SET(Sf, r, c, 1, row, col, (average - u[2]) * p_r);
-//       if (!eliminated_cells[3])
-//         BUF_SET(Sf, r, c, 2, row, col, (average - u[3]) * p_r);
-//       if (!eliminated_cells[4])
-//         BUF_SET(Sf, r, c, 3, row, col, (average - u[4]) * p_r);
-//     }
-//   }
-// }
+      if (!eliminated_cells[1])
+        BUF_SET(Sf, r, c, 0, row, col, (average - u[1]) * p_r);
+      if (!eliminated_cells[2])
+        BUF_SET(Sf, r, c, 1, row, col, (average - u[2]) * p_r);
+      if (!eliminated_cells[3])
+        BUF_SET(Sf, r, c, 2, row, col, (average - u[3]) * p_r);
+      if (!eliminated_cells[4])
+        BUF_SET(Sf, r, c, 3, row, col, (average - u[4]) * p_r);
+    }
+  }
+}
 
 __global__ void sciddicaTFlowsComputationHaloKernel(int r, int c, double nodata,
                                                     int *Xi, int *Xj, double *Sz, double *Sh,
@@ -304,79 +304,112 @@ __global__ void sciddicaTFlowsComputationHaloKernel(int r, int c, double nodata,
   }
   __syncthreads();
 
-  if (threadIdx.y >= 1 && threadIdx.y < T_WIDTH && threadIdx.x >= 1 && threadIdx.x < T_WIDTH)
+  if (row_index >= 1 && row_index < r - 1 && col_index >= 1 && col_index < c - 1)
   {
-    m = Sh_ds[threadIdx.y][threadIdx.x] - p_epsilon;
-    u[0] = Sz_ds[threadIdx.y][threadIdx.x] + p_epsilon;
-
-    z = Sz_ds[threadIdx.y + Xi[1]][threadIdx.x + Xj[1]];
-    h = Sh_ds[threadIdx.y + Xi[1]][threadIdx.x + Xj[1]];
-    u[1] = z + h;
-
-    z = Sz_ds[threadIdx.y + Xi[2]][threadIdx.x + Xj[2]];
-    h = Sh_ds[threadIdx.y + Xi[2]][threadIdx.x + Xj[2]];
-    u[2] = z + h;
-
-    z = Sz_ds[threadIdx.y + Xi[3]][threadIdx.x + Xj[3]];
-    h = Sh_ds[threadIdx.y + Xi[3]][threadIdx.x + Xj[3]];
-    u[3] = z + h;
-
-    z = Sz_ds[threadIdx.y + Xi[4]][threadIdx.x + Xj[4]];
-    h = Sh_ds[threadIdx.y + Xi[4]][threadIdx.x + Xj[4]];
-    u[4] = z + h;
-
-    do
+    int index_x = threadIdx.y + MAX_MASK_WIDTH/2;
+    int index_y = threadIdx.x + MAX_MASK_WIDTH/2;
+    if (index_x >= 1 && index_x <= T_WIDTH && index_y >= 1 && index_y <= T_WIDTH)
     {
-      again = false;
-      average = m;
-      cells_count = 0;
+      m = Sh_ds[index_x][index_y] - p_epsilon;
+      u[0] = Sz_ds[index_x][index_y] + p_epsilon;
 
-      for (n = 0; n < 5; n++)
-        if (!eliminated_cells[n])
+      z = Sz_ds[index_x + Xi[1]][index_y + Xj[1]];
+      h = Sh_ds[index_x + Xi[1]][index_y + Xj[1]];
+      u[1] = z + h;
+
+      z = Sz_ds[index_x + Xi[2]][index_y + Xj[2]];
+      h = Sh_ds[index_x + Xi[2]][index_y + Xj[2]];
+      u[2] = z + h;
+
+      z = Sz_ds[index_x + Xi[3]][index_y + Xj[3]];
+      h = Sh_ds[index_x + Xi[3]][index_y + Xj[3]];
+      u[3] = z + h;
+
+      z = Sz_ds[index_x + Xi[4]][index_y + Xj[4]];
+      h = Sh_ds[index_x + Xi[4]][index_y + Xj[4]];
+      u[4] = z + h;
+
+      do
+      {
+        again = false;
+        average = m;
+        cells_count = 0;
+
+        for (n = 0; n < 5; n++)
+          if (!eliminated_cells[n])
+          {
+            average += u[n];
+            cells_count++;
+          }
+
+        if (cells_count != 0)
         {
-          average += u[n];
-          cells_count++;
+          average /= cells_count;
         }
 
-      if (cells_count != 0)
-      {
-        average /= cells_count;
-      }
-
-      for (n = 0; n < 5; n++)
-      {
-        if ((average <= u[n]) && (!eliminated_cells[n]))
+        for (n = 0; n < 5; n++)
         {
-          eliminated_cells[n] = true;
-          again = true;
+          if ((average <= u[n]) && (!eliminated_cells[n]))
+          {
+            eliminated_cells[n] = true;
+            again = true;
+          }
         }
-      }
-    } while (again);
+      } while (again);
 
-    if (!eliminated_cells[1])
-    {
-      BUF_SET(Sf, r, c, 0, row_index, col_index, (average - u[1]) * p_r);
-    }
-    if (!eliminated_cells[2])
-    {
-      BUF_SET(Sf, r, c, 1, row_index, col_index, (average - u[2]) * p_r);
-    }
-    if (!eliminated_cells[3])
-    {
-      BUF_SET(Sf, r, c, 2, row_index, col_index, (average - u[3]) * p_r);
-    }
-    if (!eliminated_cells[4])
-    {
-      BUF_SET(Sf, r, c, 3, row_index, col_index, (average - u[4]) * p_r);
+      if (!eliminated_cells[1])
+      {
+        BUF_SET(Sf, r, c, 0, row_index, col_index, (average - u[1]) * p_r);
+      }
+      if (!eliminated_cells[2])
+      {
+        BUF_SET(Sf, r, c, 1, row_index, col_index, (average - u[2]) * p_r);
+      }
+      if (!eliminated_cells[3])
+      {
+        BUF_SET(Sf, r, c, 2, row_index, col_index, (average - u[3]) * p_r);
+      }
+      if (!eliminated_cells[4])
+      {
+        BUF_SET(Sf, r, c, 3, row_index, col_index, (average - u[4]) * p_r);
+      }
     }
   }
 }
 
 // This kernel benefits from a tiled implementation
+__global__ void sciddicaTWidthUpdateKernel(int r, int c, double nodata, int *Xi,
+                                           int *Xj, double *Sz, double *Sh,
+                                           double *Sf)
+{
+  int row_index = threadIdx.y + blockDim.y * blockIdx.y;
+  int col_index = threadIdx.x + blockDim.x * blockIdx.x;
+  int row_stride = blockDim.y * gridDim.y;
+  int col_stride = blockDim.x * gridDim.x;
+
+  for (int row = row_index + 1; row < r - 1; row += row_stride)
+  {
+    for (int col = col_index + 1; col < c - 1; col += col_stride)
+    {
+      double h_next;
+      h_next = GET(Sh, c, row, col);
+      h_next += BUF_GET(Sf, r, c, 3, row + Xi[1], col + Xj[1]) -
+                BUF_GET(Sf, r, c, 0, row, col);
+      h_next += BUF_GET(Sf, r, c, 2, row + Xi[2], col + Xj[2]) -
+                BUF_GET(Sf, r, c, 1, row, col);
+      h_next += BUF_GET(Sf, r, c, 1, row + Xi[3], col + Xj[3]) -
+                BUF_GET(Sf, r, c, 2, row, col);
+      h_next += BUF_GET(Sf, r, c, 0, row + Xi[4], col + Xj[4]) -
+                BUF_GET(Sf, r, c, 3, row, col);
+
+      SET(Sh, c, row, col, h_next);
+    }
+  }
+}
 __global__ void sciddicaTWidthUpdateHaloKernel(int r, int c, double nodata, int *Xi, int *Xj, double *Sz, double *Sh, double *Sf)
 {
-  int row_index = 1 + threadIdx.y + T_WIDTH * blockIdx.y;
-  int col_index = 1 + threadIdx.x + T_WIDTH * blockIdx.x;
+  int row_index = threadIdx.y + T_WIDTH * blockIdx.y;
+  int col_index = threadIdx.x + T_WIDTH * blockIdx.x;
   long row_halo = row_index - MAX_MASK_WIDTH / 2;
   long col_halo = col_index - MAX_MASK_WIDTH / 2;
 
@@ -397,18 +430,21 @@ __global__ void sciddicaTWidthUpdateHaloKernel(int r, int c, double nodata, int 
   }
   __syncthreads();
 
-  int index_i = threadIdx.y + MAX_MASK_WIDTH / 2;
-  int index_j = threadIdx.x + MAX_MASK_WIDTH / 2;
-
-  if (threadIdx.x < T_WIDTH && threadIdx.y < T_WIDTH)
+  if (row_index >= 1 && col_index >= 1 && row_index < r - 1 && col_index < c - 1)
   {
-    h_next = GET(Sh, c, row_index, col_index);
-    h_next += Sf_ds[index_i + Xi[1] + (T_BLOCK_WIDTH * 3)][index_j + Xj[1]] - Sf_ds[index_i][index_j];
-    h_next += Sf_ds[index_i + Xi[2] + (T_BLOCK_WIDTH * 2)][index_j + Xj[2]] - Sf_ds[index_i + T_BLOCK_WIDTH][index_j];
-    h_next += Sf_ds[index_i + Xi[3] + T_BLOCK_WIDTH][index_j + Xj[3]] - Sf_ds[index_i + (T_BLOCK_WIDTH * 2)][index_j];
-    h_next += Sf_ds[index_i + Xi[4]][index_j + Xj[4]] - Sf_ds[index_i + (T_BLOCK_WIDTH * 3)][index_j];
+    int index_i = threadIdx.y + MAX_MASK_WIDTH / 2;
+    int index_j = threadIdx.x + MAX_MASK_WIDTH / 2;
+    ;
+    if (index_i >= 1 && index_i <= T_WIDTH && index_j >= 1 && index_j <= T_WIDTH)
+    {
+      h_next = GET(Sh, c, row_index, col_index);
+      h_next += Sf_ds[index_i + Xi[1] + (T_BLOCK_WIDTH * 3)][index_j + Xj[1]] - Sf_ds[index_i][index_j];
+      h_next += Sf_ds[index_i + Xi[2] + (T_BLOCK_WIDTH * 2)][index_j + Xj[2]] - Sf_ds[index_i + T_BLOCK_WIDTH][index_j];
+      h_next += Sf_ds[index_i + Xi[3] + T_BLOCK_WIDTH][index_j + Xj[3]] - Sf_ds[index_i + (T_BLOCK_WIDTH * 2)][index_j];
+      h_next += Sf_ds[index_i + Xi[4]][index_j + Xj[4]] - Sf_ds[index_i + (T_BLOCK_WIDTH * 3)][index_j];
 
-    SET(Sh, c, row_index, col_index, h_next);
+      SET(Sh, c, row_index, col_index, h_next);
+    }
   }
 }
 
@@ -498,16 +534,27 @@ int main(int argc, char **argv)
     gpuErrchk(cudaPeekAtLastError());
     gpuErrchk(cudaDeviceSynchronize());
     // Apply the FlowComputation kernel to the whole domain
+    // sciddicaTFlowsComputationKernel<<<grid_size, block_size>>>(r, c, nodata, Xi, Xj, Sz, Sh, Sf, p_r, p_epsilon);
     sciddicaTFlowsComputationHaloKernel<<<tiled_grid_size, tiled_block_size>>>(r, c, nodata, Xi, Xj, Sz, Sh, Sf, p_r, p_epsilon);
     gpuErrchk(cudaPeekAtLastError());
     gpuErrchk(cudaDeviceSynchronize());
     // Apply the WidthUpdate mass balance kernel to the whole domain
+    // sciddicaTWidthUpdateKernel<<<grid_size, block_size>>>(r, c, nodata, Xi, Xj, Sz, Sh, Sf);
     sciddicaTWidthUpdateHaloKernel<<<tiled_grid_size, tiled_block_size>>>(r, c, nodata, Xi, Xj, Sz, Sh, Sf);
     gpuErrchk(cudaPeekAtLastError());
     gpuErrchk(cudaDeviceSynchronize());
   }
   double cl_time = static_cast<double>(cl_timer.getTimeMilliseconds()) / 1000.0;
   printf("Elapsed time: %lf [s]\n", cl_time);
+
+  // for (int i = 0; i < rows; i++)
+  // {
+  //   for (int j = 0; j < cols; j++)
+  //   {
+  //     printf("%lf\t", GET(Sh, c, i, j));
+  //   }
+  //   printf("\n");
+  // }
 
   saveGrid2Dr(Sh, r, c, argv[OUTPUT_PATH_ID]); // Save Sh to file
 
