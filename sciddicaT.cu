@@ -31,6 +31,12 @@
   (M[(((n) * (rows) * (columns)) + ((i) * (columns)) + (j))])
 
 // ----------------------------------------------------------------------------
+// Constant neighbourhood array
+// ----------------------------------------------------------------------------
+#define NEIGHBOURHOOD 5
+__constant__ int Xi[5];
+__constant__ int Xj[5];
+// ----------------------------------------------------------------------------
 // Inline error checking
 // ----------------------------------------------------------------------------
 #define gpuErrchk(ans)                    \
@@ -192,7 +198,7 @@ __global__ void sciddicaTResetFlowsKernel(int r, int c, double nodata,
 }
 
 __global__ void sciddicaTFlowsComputationKernel(int r, int c, double nodata,
-                                                int *Xi, int *Xj, double *Sz, double *Sh,
+                                                double *Sz, double *Sh,
                                                 double *Sf, double p_r, double p_epsilon)
 {
   bool eliminated_cells[5] = {false, false, false, false, false};
@@ -264,8 +270,7 @@ __global__ void sciddicaTFlowsComputationKernel(int r, int c, double nodata,
   }
 }
 
-__global__ void sciddicaTWidthUpdateKernel(int r, int c, double nodata, int *Xi,
-                                           int *Xj, double *Sz, double *Sh, double *Sf)
+__global__ void sciddicaTWidthUpdateKernel(int r, int c, double nodata, double *Sz, double *Sh, double *Sf)
 {
   int row_index = threadIdx.y + blockDim.y * blockIdx.y;
   int col_index = threadIdx.x + blockDim.x * blockIdx.x;
@@ -307,24 +312,13 @@ int main(int argc, char **argv)
   double *Sh;   // Sh: substate (grid) containing the cells' flow thickness
   double *Sf;   // Sf: 4 substates containing the flows towards the 4 neighs
 
-  int *Xi;
-  int *Xj;
-
-  gpuErrchk(cudaMallocManaged(&Xi, sizeof(int) * 5));
-  gpuErrchk(cudaMallocManaged(&Xj, sizeof(int) * 5));
-
-  // Xj: von Neuman neighborhood row coordinates (see below)
-  Xi[0] = 0;
-  Xi[1] = -1;
-  Xi[2] = 0;
-  Xi[3] = 0;
-  Xi[4] = 1;
+  // Xi: von Neuman neighborhood row coordinates (see below)
   // Xj: von Neuman neighborhood col coordinates (see below)
-  Xj[0] = 0;
-  Xj[1] = 0;
-  Xj[2] = -1;
-  Xj[3] = 1;
-  Xj[4] = 0;
+  int Xi_h[] = {0, -1, 0, 0, 1};
+  int Xj_h[] = {0, 0, -1, 1, 0};
+
+  gpuErrchk(cudaMemcpyToSymbol(Xi, Xi_h, sizeof(int) * NEIGHBOURHOOD));
+  gpuErrchk(cudaMemcpyToSymbol(Xj, Xj_h, sizeof(int) * NEIGHBOURHOOD));
 
   double p_r = P_R;                 // p_r: minimization algorithm outflows dumping factor
   double p_epsilon = P_EPSILON;     // p_epsilon: frictional parameter threshold
@@ -379,11 +373,11 @@ int main(int argc, char **argv)
     gpuErrchk(cudaDeviceSynchronize());
     // Apply the FlowComputation kernel to the whole domain
     sciddicaTFlowsComputationKernel<<<comp_grid_size, comp_block_size>>>(
-        r, c, nodata, Xi, Xj, Sz, Sh, Sf, p_r, p_epsilon);
+        r, c, nodata, Sz, Sh, Sf, p_r, p_epsilon);
     gpuErrchk(cudaPeekAtLastError());
     gpuErrchk(cudaDeviceSynchronize());
     // Apply the WidthUpdate mass balance kernel to the whole domain
-    sciddicaTWidthUpdateKernel<<<grid_size, block_size>>>(r, c, nodata, Xi, Xj,
+    sciddicaTWidthUpdateKernel<<<grid_size, block_size>>>(r, c, nodata,
                                                           Sz, Sh, Sf);
     gpuErrchk(cudaPeekAtLastError());
     gpuErrchk(cudaDeviceSynchronize());
