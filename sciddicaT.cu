@@ -21,6 +21,12 @@
 #define STRLEN 256
 
 // ----------------------------------------------------------------------------
+// Neighbourhood arrays
+// ----------------------------------------------------------------------------
+#define NEIGHBOURHOOD 5
+__constant__ int Xi[NEIGHBOURHOOD];
+__constant__ int Xj[NEIGHBOURHOOD];
+// ----------------------------------------------------------------------------
 // Tiled Halo Cell parameters
 // ----------------------------------------------------------------------------
 #define MAX_MASK_WIDTH 3
@@ -200,7 +206,7 @@ __global__ void sciddicaTResetFlowsKernel(int r, int c, double nodata, double *S
 
 // This kernel benefits from a tiled implementation
 __global__ void sciddicaTFlowsComputationHaloKernel(int r, int c, double nodata,
-                                                    int *Xi, int *Xj, double *Sz, double *Sh,
+                                                    double *Sz, double *Sh,
                                                     double *Sf, double p_r, double p_epsilon)
 {
   bool eliminated_cells[5] = {false, false, false, false, false};
@@ -234,8 +240,8 @@ __global__ void sciddicaTFlowsComputationHaloKernel(int r, int c, double nodata,
 
   if (row_index >= 1 && row_index < r - 1 && col_index >= 1 && col_index < c - 1)
   {
-    int index_i = threadIdx.y + MAX_MASK_WIDTH/2;
-    int index_j = threadIdx.x + MAX_MASK_WIDTH/2;
+    int index_i = threadIdx.y + MAX_MASK_WIDTH / 2;
+    int index_j = threadIdx.x + MAX_MASK_WIDTH / 2;
     if (index_i >= 1 && index_i <= T_WIDTH && index_j >= 1 && index_j <= T_WIDTH)
     {
       m = Sh_ds[index_i][index_j] - p_epsilon;
@@ -306,7 +312,7 @@ __global__ void sciddicaTFlowsComputationHaloKernel(int r, int c, double nodata,
 }
 
 // This kernel benefits from a tiled implementation
-__global__ void sciddicaTWidthUpdateHaloKernel(int r, int c, double nodata, int *Xi, int *Xj, double *Sz, double *Sh, double *Sf)
+__global__ void sciddicaTWidthUpdateHaloKernel(int r, int c, double nodata, double *Sz, double *Sh, double *Sf)
 {
   int row_index = threadIdx.y + T_WIDTH * blockIdx.y;
   int col_index = threadIdx.x + T_WIDTH * blockIdx.x;
@@ -362,24 +368,13 @@ int main(int argc, char **argv)
   double *Sh;   // Sh: substate (grid) containing the cells' flow thickness
   double *Sf;   // Sf: 4 substates containing the flows towards the 4 neighs
 
-  int *Xi;
-  int *Xj;
-
-  gpuErrchk(cudaMallocManaged(&Xi, sizeof(int) * 5));
-  gpuErrchk(cudaMallocManaged(&Xj, sizeof(int) * 5));
-
-  // Xj: von Neuman neighborhood row coordinates (see below)
-  Xi[0] = 0;
-  Xi[1] = -1;
-  Xi[2] = 0;
-  Xi[3] = 0;
-  Xi[4] = 1;
+  // Xi: von Neuman neighborhood row coordinates (see below)
   // Xj: von Neuman neighborhood col coordinates (see below)
-  Xj[0] = 0;
-  Xj[1] = 0;
-  Xj[2] = -1;
-  Xj[3] = 1;
-  Xj[4] = 0;
+  int Xi_h[] = {0, -1, 0, 0, 1};
+  int Xj_h[] = {0, 0, -1, 1, 0};
+
+  gpuErrchk(cudaMemcpyToSymbol(Xi, Xi_h, sizeof(int) * NEIGHBOURHOOD));
+  gpuErrchk(cudaMemcpyToSymbol(Xj, Xj_h, sizeof(int) * NEIGHBOURHOOD));
 
   double p_r = P_R;                 // p_r: minimization algorithm outflows dumping factor
   double p_epsilon = P_EPSILON;     // p_epsilon: frictional parameter threshold
@@ -433,11 +428,11 @@ int main(int argc, char **argv)
     gpuErrchk(cudaPeekAtLastError());
     gpuErrchk(cudaDeviceSynchronize());
     // Apply the FlowComputation kernel to the whole domain
-    sciddicaTFlowsComputationHaloKernel<<<tiled_grid_size, tiled_block_size>>>(r, c, nodata, Xi, Xj, Sz, Sh, Sf, p_r, p_epsilon);
+    sciddicaTFlowsComputationHaloKernel<<<tiled_grid_size, tiled_block_size>>>(r, c, nodata, Sz, Sh, Sf, p_r, p_epsilon);
     gpuErrchk(cudaPeekAtLastError());
     gpuErrchk(cudaDeviceSynchronize());
     // Apply the WidthUpdate mass balance kernel to the whole domain
-    sciddicaTWidthUpdateHaloKernel<<<tiled_grid_size, tiled_block_size>>>(r, c, nodata, Xi, Xj, Sz, Sh, Sf);
+    sciddicaTWidthUpdateHaloKernel<<<tiled_grid_size, tiled_block_size>>>(r, c, nodata, Sz, Sh, Sf);
     gpuErrchk(cudaPeekAtLastError());
     gpuErrchk(cudaDeviceSynchronize());
   }
