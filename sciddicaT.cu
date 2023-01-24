@@ -324,12 +324,12 @@ __global__ void sciddicaTWidthUpdateKernel(int r, int c, double nodata, int *Xi,
           h_next += Sf_ds[threadIdx.y + T_WIDTH * (MAX_MASK_WIDTH - tmp) + Xi[tmp + 1]][threadIdx.x + Xj[tmp + 1]] - Sf_ds[threadIdx.y + T_WIDTH * tmp][threadIdx.x];
         }
         else
-        { // try to get a L2 cache hit (best case, otherwise global memory in DRAM has to be accessed)
+        {
           h_next += BUF_GET(Sf, r, c, (MAX_MASK_WIDTH - tmp), n_index_y, n_index_x) - BUF_GET(Sf, r, c, tmp, row_index, col_index);
         }
       }
     }
-    SET(Sh, c, row_index, col_index, h_next); // TODO check calculation results
+    SET(Sh, c, row_index, col_index, h_next);
   }
 }
 
