@@ -20,12 +20,11 @@
 #define STRLEN 256
 
 // ----------------------------------------------------------------------------
-// Tiled Halo Cell parameters
+// Tiled parameters
 // ----------------------------------------------------------------------------
 #define MAX_MASK_WIDTH 3
 #define T_WIDTH 30
-#define T_BLOCK_WIDTH (T_WIDTH + MAX_MASK_WIDTH - 1)
-#define T_BUFF_SIZE (T_BLOCK_WIDTH * T_BLOCK_WIDTH)
+#define T_WIDTH_COMPUTATION 27
 
 // ----------------------------------------------------------------------------
 // Read/Write access macros linearizing single/multy layer buffer 2D indices
@@ -375,6 +374,9 @@ int main(int argc, char **argv)
   dim3 tiled_block_size(T_WIDTH, T_WIDTH, 1); // == T_BUFF_SIZE
   dim3 tiled_grid_size(ceil(rows / T_WIDTH), ceil(cols / T_WIDTH), 1);
 
+  dim3 tiled_block_size_computation(T_WIDTH_COMPUTATION, T_WIDTH_COMPUTATION, 1); // == T_BUFF_SIZE
+  dim3 tiled_grid_size_computation(ceil(rows / T_WIDTH_COMPUTATION), ceil(cols / T_WIDTH_COMPUTATION), 1);
+
   // Not all kernels are going to use a tiled implementation so we keep the normal grid and block size variables
   int n = rows * cols;
   int dim_x = 32;
@@ -420,7 +422,7 @@ int main(int argc, char **argv)
     gpuErrchk(cudaPeekAtLastError());
     gpuErrchk(cudaDeviceSynchronize());
     // Apply the FlowComputation kernel to the whole domain
-    sciddicaTFlowsComputationKernel<<<tiled_grid_size, tiled_block_size>>>(r, c, nodata, Xi, Xj, Sz, Sh, Sf, p_r, p_epsilon);
+    sciddicaTFlowsComputationKernel<<<tiled_grid_size_computation, tiled_block_size_computation>>>(r, c, nodata, Xi, Xj, Sz, Sh, Sf, p_r, p_epsilon);
     gpuErrchk(cudaPeekAtLastError());
     gpuErrchk(cudaDeviceSynchronize());
     // Apply the WidthUpdate mass balance kernel to the whole domain
